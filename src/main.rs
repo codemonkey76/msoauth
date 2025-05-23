@@ -1,8 +1,14 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::time::sleep;
+use tracing::{error, info};
 
 #[derive(Deserialize)]
 struct AppConfig {
@@ -27,6 +33,8 @@ struct TokenResponse {
     refresh_token: Option<String>,
     expires_in: u64,
     token_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -39,17 +47,31 @@ struct TokenRequest<'a> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config()?;
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt().with_env_filter("info").init();
+    let config = load_config().context("Failed to load config")?;
+    let args: Vec<String> = std::env::args().collect();
 
-    if std::env::args().any(|arg| arg == "--print-token") {
-        return print_token_only().map_err(Into::into);
+    if args.contains(&"--print-token".to_string()) {
+        return print_token_or_refresh(&config).await;
     }
 
-    if std::env::args().any(|arg| arg == "--refresh") {
+    if args.contains(&"--refresh".to_string()) {
         return refresh_token(&config).await;
     }
 
+    if args.contains(&"--login".to_string()) {
+        return run_device_login(&config).await;
+    }
+
+    // Default: try refresh, fallback to login
+    match refresh_token(&config).await {
+        Ok(_) => Ok(()),
+        Err(_) => run_device_login(&config).await,
+    }
+}
+
+async fn run_device_login(config: &AppConfig) -> Result<()> {
     let device_url = format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/devicecode",
         config.tenant_id
@@ -61,7 +83,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = reqwest::Client::new();
 
-    // Step 1: Request device code
     let mut params = HashMap::new();
     params.insert("client_id", &config.client_id);
     params.insert("scope", &config.scope);
@@ -74,13 +95,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .json()
         .await?;
 
-    println!(
+    info!(
         "\nTo authenticate, visit: {}\nAnd enter code: {}\n",
         res.verification_uri, res.user_code
     );
-    println!("{}\n", res.message);
+    info!("{}\n", res.message);
 
-    // Step 2: Poll for token
     loop {
         sleep(Duration::from_secs(res.interval)).await;
 
@@ -98,31 +118,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .send()
             .await?;
 
-        println!("REQUEST: \n{}", serde_urlencoded::to_string(&request_body)?);
-
         if resp.status().is_success() {
-            let token: TokenResponse = resp.json().await?;
+            let mut token: TokenResponse = resp.json().await?;
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            token.expires_at = Some(now + token.expires_in);
             save_token(&token)?;
-            println!("\nAccess token: {}\n", token.access_token);
+            info!("\nAccess token: {}\n", token.access_token);
             break;
         } else {
             let body = resp.text().await?;
             if !body.contains("authorization_pending") {
-                eprintln!("\nError: {}", body);
+                error!("\nError: {}", body);
                 break;
             }
         }
     }
     Ok(())
 }
+fn token_path() -> Result<PathBuf> {
+    Ok(dirs::config_dir()
+        .context("Could not determine config directory")?
+        .join("neomutt/token.json"))
+}
 
-async fn refresh_token(config: &AppConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let path = PathBuf::from("~/.config/neomutt/token.json").expand();
-    let path = shellexpand::tilde(&path.to_string_lossy()).to_string();
-    let data = std::fs::read_to_string(path)?;
+fn config_path() -> Result<PathBuf> {
+    Ok(dirs::config_dir()
+        .context("Could not determine config directory")?
+        .join("msoauth/config.toml"))
+}
+
+fn read_token_file() -> Result<String> {
+    let path = token_path()?;
+    fs::read_to_string(&path).context("Failed to read token file")
+}
+
+async fn refresh_token(config: &AppConfig) -> Result<()> {
+    let data = read_token_file()?;
     let old_token: TokenResponse = serde_json::from_str(&data)?;
 
-    let refresh_token = old_token.refresh_token.ok_or("Missing refresh token")?;
+    let refresh_token = old_token
+        .refresh_token
+        .ok_or_else(|| anyhow::anyhow!("Missing refresh token"))?;
 
     let client = reqwest::Client::new();
     let mut params = HashMap::new();
@@ -138,49 +174,48 @@ async fn refresh_token(config: &AppConfig) -> Result<(), Box<dyn std::error::Err
     let res = client.post(&token_url).form(&params).send().await?;
 
     if res.status().is_success() {
-        let new_token: TokenResponse = res.json().await?;
+        let mut new_token: TokenResponse = res.json().await?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        new_token.expires_at = Some(now + new_token.expires_in);
         save_token(&new_token)?;
-        println!("Refreshed access token.");
+        info!("Refreshed access token.");
+        Ok(())
     } else {
         let body = res.text().await?;
-        eprintln!("Refresh failed:\n{}", body);
+        error!("Refresh failed:\n{}", body);
+        Err(anyhow::anyhow!("Refresh failed"))
+    }
+}
+
+async fn print_token_or_refresh(config: &AppConfig) -> Result<()> {
+    let data = read_token_file()?;
+    let token: TokenResponse = serde_json::from_str(&data)?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    if let Some(exp) = token.expires_at {
+        if exp > now + 300 {
+            info!("{}", token.access_token);
+            return Ok(());
+        }
     }
 
-    Ok(())
-}
-
-fn print_token_only() -> std::io::Result<()> {
-    let path = PathBuf::from("~/.config/neomutt/token.json").expand();
-    let path = shellexpand::tilde(&path.to_string_lossy()).to_string();
-    let data = fs::read_to_string(path)?;
+    refresh_token(config).await?;
+    let data = read_token_file()?;
     let token: TokenResponse = serde_json::from_str(&data)?;
-    println!("{}", token.access_token);
+    info!("{}", token.access_token);
     Ok(())
 }
 
-fn save_token(token: &TokenResponse) -> std::io::Result<()> {
-    let path = PathBuf::from("~/.config/neomutt/token.json").expand();
-    let json = serde_json::to_string_pretty(&token)?;
-    let path = shellexpand::tilde(&path.to_string_lossy()).to_string();
-    let mut file = std::fs::File::create(path)?;
+fn save_token(token: &TokenResponse) -> Result<()> {
+    let path = token_path()?;
+    let json = serde_json::to_string_pretty(token)?;
+    let mut file = std::fs::File::create(&path)?;
     file.write_all(json.as_bytes())?;
-
     Ok(())
 }
 
-fn load_config() -> Result<AppConfig, Box<dyn std::error::Error>> {
-    let config_path = shellexpand::tilde("~/.config/msoauth/config.toml").to_string();
-    let config_data = fs::read_to_string(config_path)?;
+fn load_config() -> Result<AppConfig> {
+    let config_data = fs::read_to_string(config_path()?)?;
     let config: AppConfig = toml::from_str(&config_data)?;
     Ok(config)
-}
-
-trait ExpandPath {
-    fn expand(&self) -> PathBuf;
-}
-
-impl ExpandPath for PathBuf {
-    fn expand(&self) -> PathBuf {
-        PathBuf::from(shellexpand::tilde(&self.to_string_lossy()).to_string())
-    }
 }
