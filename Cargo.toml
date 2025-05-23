@@ -1,0 +1,15 @@
+[package]
+name = "msoauth"
+description = "A simple Microsoft OAuth2 client"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+reqwest = { version = "0.12.15", features = ["json"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+serde_urlencoded = "0.7.1"
+shellexpand = "3.1.1"
+tokio = { version = "1.45.0", features = ["full"] }
+toml = "0.8.22"
