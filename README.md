@@ -1,8 +1,21 @@
-## msoauth
+# msoauth
 
-A simple CLI tool for retrieving, refreshing, and printing Microsoft OAuth2 tokens via the Device Code flow. Useful for tools like NeoMutt with OAuth2-based accounts.
+<!--toc:start-->
+- [msoauth](#msoauth)
+  - [Features](#features)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+  - [Usage](#usage)
+  - [Integration Example (NeoMutt)](#integration-example-neomutt)
+  - [License](#license)
+<!--toc:end-->
 
-### Features
+A simple CLI tool for retrieving, refreshing, and printing Microsoft OAuth2
+tokens via the Device Code flow. Useful for tools like NeoMutt with
+OAuth2-based accounts.
+
+## Features
 
 - Authenticates using Microsoft OAuth2 Device Code flow
 - Automatically saves/refreshes access tokens
@@ -10,22 +23,22 @@ A simple CLI tool for retrieving, refreshing, and printing Microsoft OAuth2 toke
 - Logs activity via tracing
 - Friendly error messages and self-healing default mode
 
-### Requirements
+## Requirements
 
 - Rust (use rustup to install)
 - A registered Azure AD app with the following:
   - client_id
   - tenant_id
   - client_secret
-  - Scopes (e.g. https://graph.microsoft.com/.default)
+  - Scopes (e.g. <https://graph.microsoft.com/.default>)
 
-### Installation
+## Installation
 
 ```bash
 cargo install --path .
 ```
 
-### Configuration
+## Configuration
 
 Create the file:
 
@@ -43,14 +56,17 @@ scope = "https://graph.microsoft.com/.default"
 ```
 
 To obtain these values:
-1. Go to [https://portal.azure.com](https://portal.aszure.com)
-2. Navigate to ** Azure Active Directory > App Registrations **
-3. Register a new app
-4. Under ** Overview **, copy the `Application (cliend) ID` and `Directory (tenant) ID`.
-5. Under ** Certificates & secrets **, create a new client secret.
-6. Under ** API Permissions **. Add `Microsoft Graph > Delegated | User.Read` or other needed scopes.
 
-### Usage
+1. Go to [https://portal.azure.com](https://portal.aszure.com)
+2. Navigate to **Azure Active Directory > App Registrations**
+3. Register a new app
+4. Under **Overview**, copy the `Application (cliend) ID` and
+`Directory (tenant) ID`.
+5. Under **Certificates & secrets**, create a new client secret.
+6. Under **API Permissions**. Add `Microsoft Graph > Delegated | User.Read` or
+other needed scopes.
+
+## Usage
 
 ```bash
 msoauth --login         # Start device login flow
@@ -66,12 +82,12 @@ Token is stored at:
 ~/.config/neomutt/token.json
 ```
 
-### Integration Example (NeoMutt)
+## Integration Example (NeoMutt)
 
 ```bash
 set imap_pass="`msoauth --print-token`"
 ```
 
-### License
+## License
 
 MIT
