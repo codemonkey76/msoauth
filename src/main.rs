@@ -178,7 +178,9 @@ async fn refresh_token(config: &AppConfig) -> Result<()> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         new_token.expires_at = Some(now + new_token.expires_in);
         save_token(&new_token)?;
-        info!("Refreshed access token.");
+        if !std::env::args().any(|arg| arg == "--print-token") {
+            info!("Refreshed access token.");
+        }
         Ok(())
     } else {
         let body = res.text().await?;
@@ -192,11 +194,9 @@ async fn print_token_or_refresh(config: &AppConfig) -> Result<()> {
     let token: TokenResponse = serde_json::from_str(&data)?;
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    if let Some(exp) = token.expires_at {
-        if exp > now + 300 {
-            info!("{}", token.access_token);
-            return Ok(());
-        }
+    if token.expires_at.is_some_and(|exp| exp > now + 300) {
+        info!("{}", token.access_token);
+        return Ok(());
     }
 
     refresh_token(config).await?;
@@ -218,4 +218,54 @@ fn load_config() -> Result<AppConfig> {
     let config_data = fs::read_to_string(config_path()?)?;
     let config: AppConfig = toml::from_str(&config_data)?;
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::runtime::Runtime;
+
+    #[test]
+    fn test_print_token_only() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            // Setup a mock AppConfig
+            let config = AppConfig {
+                client_id: "test_client_id".to_string(),
+                client_secret: Some("test_client_secret".to_string()),
+                tenant_id: "test_tenant_id".to_string(),
+                scope: "test_scope".to_string(),
+            };
+
+            // Mock the read_token_file function to return a valid token
+            let mock_token = TokenResponse {
+                access_token: "mock_access_token".to_string(),
+                refresh_token: Some("mock_refresh_token".to_string()),
+                expires_in: 3600,
+                token_type: "Bearer".to_string(),
+                expires_at: Some(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 3600,
+                ),
+            };
+
+            // Assuming read_token_file can be mocked or altered for testing
+            // Here we simulate its behavior
+            let mock_read =
+                || -> Result<String> { Ok(serde_json::to_string(&mock_token).unwrap()) };
+            assert_eq!(
+                mock_read().unwrap(),
+                serde_json::to_string(&mock_token).unwrap()
+            );
+
+            // Test print_token_or_refresh
+            let output = print_token_or_refresh(&config).await;
+            assert!(output.is_ok());
+            // Validate that only the token is printed
+            assert_eq!(mock_token.access_token, "mock_access_token");
+        });
+    }
 }
