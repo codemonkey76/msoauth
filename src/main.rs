@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -9,6 +10,27 @@ use std::{
 };
 use tokio::time::sleep;
 use tracing::{error, info};
+
+/// OAuth CLI for retrieving and refreshing tokens
+#[derive(Parser)]
+#[command(name = "msoauth", version, about)]
+struct Cli {
+    /// Print current access token (reresh if needed)
+    #[arg(long)]
+    print_token: bool,
+
+    /// Force a token refresh
+    #[arg(long)]
+    refresh: bool,
+
+    /// Start device login flow
+    #[arg(long)]
+    login: bool,
+
+    /// Delete saves token file
+    #[arg(long)]
+    clear_token: bool,
+}
 
 #[derive(Deserialize)]
 struct AppConfig {
@@ -49,22 +71,35 @@ struct TokenRequest<'a> {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
-    let config = load_config().context("Failed to load config")?;
-    let args: Vec<String> = std::env::args().collect();
 
-    if args.contains(&"--print-token".to_string()) {
+    let args = Cli::parse();
+    let config = load_config().context("Failed to load config")?;
+
+    if args.clear_token {
+        let path = token_path()?;
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove token file at {}", path.display()))?;
+            info!("Deleted token file at {}", path.display());
+        } else {
+            info!("No token file found to delete.");
+        }
+        return Ok(());
+    }
+
+    if args.print_token {
         return print_token_or_refresh(&config).await;
     }
 
-    if args.contains(&"--refresh".to_string()) {
+    if args.refresh {
         return refresh_token(&config).await;
     }
 
-    if args.contains(&"--login".to_string()) {
+    if args.login {
         return run_device_login(&config).await;
     }
 
-    // Default: try refresh, fallback to login
+    // Default fallback
     match refresh_token(&config).await {
         Ok(_) => Ok(()),
         Err(_) => run_device_login(&config).await,
@@ -215,7 +250,21 @@ fn save_token(token: &TokenResponse) -> Result<()> {
 }
 
 fn load_config() -> Result<AppConfig> {
-    let config_data = fs::read_to_string(config_path()?)?;
+    let path = config_path()?;
+
+    if !path.exists() {
+        anyhow::bail!(
+            "Config file not found at {}\n\n\
+        Please create it with the following format:\n\n\
+        [default]\n\
+        client_id = \"...\"\n\
+        client_secret = \"...\"\n\
+        tenant_id = \"...\"\n\
+        scope = \"https://graph.microsoft.com/.default\"",
+            path.display()
+        );
+    }
+    let config_data = fs::read_to_string(&path)?;
     let config: AppConfig = toml::from_str(&config_data)?;
     Ok(config)
 }

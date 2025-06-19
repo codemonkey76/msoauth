@@ -1,12 +1,13 @@
 [package]
 name = "msoauth"
 description = "A simple Microsoft OAuth2 client"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
 anyhow = "1.0.98"
+clap = { version = "4.5.38", features = ["derive"] }
 dirs = "6.0.0"
 reqwest = { version = "0.12.15", features = ["json"] }
 serde = { version = "1.0.219", features = ["derive"] }
