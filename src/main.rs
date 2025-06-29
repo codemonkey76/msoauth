@@ -230,20 +230,23 @@ async fn print_token_or_refresh(config: &AppConfig) -> Result<()> {
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     if token.expires_at.is_some_and(|exp| exp > now + 300) {
-        info!("{}", token.access_token);
+        println!("{}", token.access_token);
         return Ok(());
     }
 
     refresh_token(config).await?;
     let data = read_token_file()?;
     let token: TokenResponse = serde_json::from_str(&data)?;
-    info!("{}", token.access_token);
+    println!("{}", token.access_token);
     Ok(())
 }
 
 fn save_token(token: &TokenResponse) -> Result<()> {
     let path = token_path()?;
     let json = serde_json::to_string_pretty(token)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let mut file = std::fs::File::create(&path)?;
     file.write_all(json.as_bytes())?;
     Ok(())
