@@ -15,7 +15,6 @@ use crate::{
 pub async fn run() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
     let args = Cli::parse();
-    tracing::info!("Starting msoauth with args: {:?}", args);
     let profile = args.profile.as_deref().unwrap_or("default");
     let config = load_profile(profile)?;
 

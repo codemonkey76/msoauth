@@ -49,12 +49,6 @@ pub async fn run_device_login(config: &AppConfig, profile: &str) -> Result<()> {
         .json()
         .await?;
 
-    info!(
-        "\nTo authenticate, visit: {}\nAnd enter code: {}\n",
-        res.verification_uri, res.user_code
-    );
-    info!("{}\n", res.message);
-
     loop {
         sleep(Duration::from_secs(res.interval)).await;
 
@@ -77,7 +71,6 @@ pub async fn run_device_login(config: &AppConfig, profile: &str) -> Result<()> {
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             token.expires_at = Some(now + token.expires_in);
             save_token(&token, profile)?;
-            info!("\nAccess token: {}\n", token.access_token);
             break;
         } else {
             let body = resp.text().await?;
@@ -114,9 +107,6 @@ pub async fn refresh_token(config: &AppConfig, profile: &str) -> Result<()> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         new_token.expires_at = Some(now + new_token.expires_in);
         save_token(&new_token, profile)?;
-        if !std::env::args().any(|arg| arg == "--print-token") {
-            info!("Refreshed access token.");
-        }
         Ok(())
     } else {
         let body = res.text().await?;
